@@ -1,4 +1,4 @@
 openai-whisper
 torch
 pydub
-gunicorn 
+gunicorn==22.0.0
