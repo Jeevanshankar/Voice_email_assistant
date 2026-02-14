@@ -307,47 +307,67 @@
 <script>
 const chat = document.getElementById("chat");
 const speakBtn = document.getElementById("speakBtn");
+const themeSel = document.getElementById("themeSel");
 
 let recognition = null;
 let isRecording = false;
 let isProcessing = false;
 
-// Dedupe guard (prevents multiple same calls)
 let lastFinalText = "";
 let lastFinalAt = 0;
 
+/* =========================
+   THEME FIX (was missing)
+========================= */
+themeSel.addEventListener("change", () => {
+  document.body.className = themeSel.value;
+});
+
+/* =========================
+   MESSAGE HELPERS
+========================= */
 function addMsg(role, text, html=false) {
   const row = document.createElement("div");
   row.className = "msgRow";
+
   const bubble = document.createElement("div");
   bubble.className = "msg " + (role === "user" ? "user" : "assistant");
+
   if (html) bubble.innerHTML = text;
   else bubble.textContent = text;
+
   row.appendChild(bubble);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
+
   return bubble;
 }
 
 function addTyping() {
   const bubble = addMsg("assistant", "", true);
-  bubble.innerHTML = `<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>`;
+  bubble.innerHTML =
+    `<span class="typing">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+     </span>`;
   return bubble;
 }
 
 addMsg("assistant", `Hi Jeevan 👋
 Say: "Read my inbox"`);
 
+/* =========================
+   SPEECH
+========================= */
 function startRecording() {
-  // hard block spam clicks
   if (isRecording || isProcessing) return;
 
   if (!('webkitSpeechRecognition' in window)) {
-    addMsg("assistant", "Speech recognition not supported in this browser.");
+    addMsg("assistant", "Speech recognition not supported.");
     return;
   }
 
-  // cleanup old instance
   if (recognition) {
     try { recognition.abort(); } catch(e) {}
     recognition = null;
@@ -356,42 +376,32 @@ function startRecording() {
   recognition = new webkitSpeechRecognition();
   recognition.lang = "en-US";
   recognition.continuous = false;
-
-  // IMPORTANT: allow interim, but only act on FINAL
   recognition.interimResults = true;
-  recognition.maxAlternatives = 1;
 
   isRecording = true;
   speakBtn.classList.add("recording");
-
   recognition.start();
 
   recognition.onresult = async (event) => {
-    // Build final transcript only
     let finalText = "";
+
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      const res = event.results[i];
-      if (res.isFinal) {
-        finalText += res[0].transcript;
+      if (event.results[i].isFinal) {
+        finalText += event.results[i][0].transcript;
       }
     }
 
-    finalText = (finalText || "").trim();
-
-    // If not final yet, ignore
+    finalText = finalText.trim();
     if (!finalText) return;
-
-    // If already processing, ignore extra final events
     if (isProcessing) return;
 
-    // Dedupe same final text within 2 seconds
     const now = Date.now();
     const norm = finalText.toLowerCase();
     if (norm === lastFinalText && (now - lastFinalAt) < 2000) return;
+
     lastFinalText = norm;
     lastFinalAt = now;
 
-    // Stop recognition immediately to avoid extra events
     try { recognition.stop(); } catch(e) {}
     recognition = null;
 
@@ -420,6 +430,22 @@ function startRecording() {
   };
 }
 
+/* =========================
+   DEFENSIVE FETCH
+========================= */
+async function safeJson(response) {
+  try {
+    return await response.json();
+  } catch (e) {
+    const raw = await response.text();
+    console.error("Invalid JSON response:", raw);
+    return { error: "SERVER_RETURNED_INVALID_JSON" };
+  }
+}
+
+/* =========================
+   PROCESS PIPELINE
+========================= */
 async function processText(text) {
   const typing = addTyping();
 
@@ -429,19 +455,28 @@ async function processText(text) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text })
     });
-    const intent = await intentRes.json();
+
+    const intent = await safeJson(intentRes);
 
     const actionRes = await fetch("/api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(intent)
     });
-    const result = await actionRes.json();
+
+    const result = await safeJson(actionRes);
 
     typing.remove();
 
+    if (result.error === "AUTH_REQUIRED") {
+      addMsg("assistant", "🔐 Redirecting to Google login...");
+      if (result.auth_url) window.location.href = result.auth_url;
+      return;
+    }
+
     if (result.emails) {
       let html = `<div style="font-weight:800">📬 Inbox</div>`;
+
       result.emails.forEach((email, i) => {
         html += `
           <div class="emailCard">
@@ -451,31 +486,37 @@ async function processText(text) {
             <div class="row"><b>Preview:</b> ${escapeHtml(email.snippet || "")}</div>
           </div>`;
       });
+
       addMsg("assistant", html, true);
-    } else if (result.email) {
+      return;
+    }
+
+    if (result.email) {
       const email = result.email;
       addMsg("assistant",
 `From: ${email.sender}
 Subject: ${email.subject}
 Preview: ${email.snippet}`);
-    } 
-    else if (result.error === "AUTH_REQUIRED") {
-      addMsg("assistant", "🔐 Please connect your Gmail account...");
-      window.location.href = result.auth_url;
-}
-    else if (result.error) {
-      addMsg("assistant", "❌ " + result.error);
-    } else {
-      addMsg("assistant", JSON.stringify(result, null, 2));
+      return;
     }
+
+    if (result.error) {
+      addMsg("assistant", "❌ " + (result.message || result.error));
+      return;
+    }
+
+    addMsg("assistant", JSON.stringify(result, null, 2));
 
   } catch (e) {
     typing.remove();
-    addMsg("assistant", "❌ Something went wrong.");
+    addMsg("assistant", "❌ Unexpected error.");
     console.error(e);
   }
 }
 
+/* =========================
+   XSS SAFE
+========================= */
 function escapeHtml(str) {
   return String(str)
     .replaceAll("&","&amp;")

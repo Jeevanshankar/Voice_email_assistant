@@ -193,13 +193,18 @@ def email_action():
     except Exception as e:
         err = str(e)
 
-        if "AUTH_REQUIRED" in err:
-            return _auth_required_response()
-
         print("Exception in /api/action:", err)
-        return jsonify({"error": f"Server error: {err}"}), 500
 
+        if "AUTH_REQUIRED" in err:
+            return jsonify({
+            "error": "AUTH_REQUIRED",
+            "auth_url": _build_auth_url()
+        }), 401
 
+    return jsonify({
+        "error": "SERVER_ERROR",
+        "message": err
+    }), 500
 
 if __name__ == "__main__":
     app.run()
