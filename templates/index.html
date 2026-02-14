@@ -1,483 +1,207 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <title>Voice Email Assistant</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root{
-      /* Base (ChatGPT-ish) */
-      --bg: #0b0f17;
-      --panel: #121826;
-      --panel2:#0f1522;
-      --text: #e7eaf0;
-      --muted: rgba(231,234,240,.75);
-      --border: rgba(255,255,255,.10);
-      --accent: #10a37f;
-      --accent2:#2ee59d;
-      --user: #1f6feb;
-      --assistant: rgba(255,255,255,.06);
-      --shadow: 0 18px 60px rgba(0,0,0,.45);
-      --radius: 16px;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
-    }
+<meta charset="utf-8" />
+<title>Voice Email Assistant</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    /* ===== THEMES ===== */
-    body.theme-siri{
-      --bg:#070a14;
-      --panel: rgba(255,255,255,.07);
-      --panel2: rgba(255,255,255,.05);
-      --accent:#7c3aed;
-      --accent2:#22d3ee;
-      --user:#2563eb;
-      --assistant: rgba(255,255,255,.08);
-    }
-    body.theme-hacker{
-      --bg:#020604;
-      --panel:#05130b;
-      --panel2:#041009;
-      --text:#b9ffcc;
-      --muted: rgba(185,255,204,.7);
-      --border: rgba(57,255,124,.18);
-      --accent:#39ff7c;
-      --accent2:#00ffa2;
-      --user:#00c853;
-      --assistant: rgba(57,255,124,.06);
-      --shadow: 0 18px 60px rgba(0,255,120,.10);
-    }
-    body.theme-saas{
-      --bg:#0b1220;
-      --panel:#0f1b2d;
-      --panel2:#0c1626;
-      --accent:#3b82f6;
-      --accent2:#22c55e;
-      --user:#2563eb;
-      --assistant: rgba(255,255,255,.06);
-    }
-    body.theme-glass{
-      --bg: radial-gradient(1200px 800px at 20% 0%, rgba(46,229,157,.20), transparent 55%),
-            radial-gradient(1000px 700px at 80% 10%, rgba(34,211,238,.20), transparent 55%),
-            linear-gradient(135deg, #08121f, #07101b);
-      --panel: rgba(255,255,255,.08);
-      --panel2: rgba(255,255,255,.06);
-      --border: rgba(255,255,255,.16);
-      --accent:#2ee59d;
-      --accent2:#22d3ee;
-      --assistant: rgba(255,255,255,.10);
-      --shadow: 0 18px 70px rgba(0,0,0,.50);
-    }
+<style>
+:root{
+  --bg:#0b0f17;
+  --panel:#121826;
+  --panel2:#0f1522;
+  --text:#e7eaf0;
+  --muted:rgba(231,234,240,.75);
+  --border:rgba(255,255,255,.10);
+  --accent:#10a37f;
+  --accent2:#2ee59d;
+  --assistant:rgba(255,255,255,.06);
+  --shadow:0 18px 60px rgba(0,0,0,.45);
+  --radius:16px;
+}
 
-    *{ box-sizing:border-box; }
-    body{
-      margin:0;
-      min-height:100vh;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      display:flex;
-      justify-content:center;
-      align-items:center;
-      padding: 18px;
-    }
-
-    .app{
-      width: min(980px, 100%);
-      height: min(86vh, 820px);
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      overflow:hidden;
-      display:flex;
-      flex-direction: column;
-      backdrop-filter: blur(10px);
-    }
-
-    .topbar{
-      display:flex;
-      align-items:center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 14px 16px;
-      background: var(--panel2);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .brand{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      font-weight: 700;
-      letter-spacing: .2px;
-    }
-    .brand .dot{
-      width:10px;height:10px;border-radius:50%;
-      background: var(--accent);
-      box-shadow: 0 0 18px rgba(16,163,127,.55);
-    }
-    .brand small{
-      display:block;
-      font-weight:500;
-      color: var(--muted);
-      letter-spacing: 0;
-      margin-top:2px;
-    }
-
-    .controls{
-      display:flex;
-      align-items:center;
-      gap: 10px;
-    }
-
-    select{
-      background: transparent;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 8px 10px;
-      outline: none;
-    }
-    option{ color:#111; }
-
-    .chat{
-      flex:1;
-      overflow:auto;
-      padding: 18px;
-      scroll-behavior: smooth;
-    }
-
-    .msgRow{
-      display:flex;
-      margin: 10px 0;
-    }
-    .msg{
-      max-width: 76%;
-      padding: 12px 14px;
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      background: var(--assistant);
-      line-height: 1.45;
-      font-size: 14px;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .msg.user{
-      margin-left:auto;
-      background: rgba(31,111,235,.20);
-      border-color: rgba(31,111,235,.35);
-    }
-    .msg.assistant{
-      margin-right:auto;
-    }
-
-    .meta{
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 6px;
-    }
-
-    .chips{
-      display:flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 10px;
-    }
-    .chip{
-      font-size: 12px;
-      padding: 6px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,.04);
-      color: var(--text);
-      cursor:pointer;
-      user-select:none;
-    }
-    .chip:hover{
-      border-color: rgba(255,255,255,.22);
-    }
-
-    .composer{
-      border-top: 1px solid var(--border);
-      background: var(--panel2);
-      padding: 12px 14px;
-      display:flex;
-      align-items:center;
-      gap: 10px;
-    }
-    .hint{
-      font-size: 12px;
-      color: var(--muted);
-      margin-left: 4px;
-    }
-
-    .speakBtn{
-      border: none;
-      cursor:pointer;
-      padding: 10px 14px;
-      border-radius: 12px;
-      color: #061018;
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      font-weight: 700;
-      display:flex;
-      align-items:center;
-      gap: 8px;
-      transition: transform .15s ease, filter .15s ease;
-    }
-    .speakBtn:hover{ transform: translateY(-1px); filter: brightness(1.05); }
-    .speakBtn.recording{
-      animation: pulse 1.1s infinite;
-    }
-    @keyframes pulse{
-      0%{ box-shadow: 0 0 0 0 rgba(46,229,157,.35); }
-      70%{ box-shadow: 0 0 0 14px rgba(46,229,157,0); }
-      100%{ box-shadow: 0 0 0 0 rgba(46,229,157,0); }
-    }
-
-    .typing{
-      display:inline-flex;
-      gap: 6px;
-      align-items:center;
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .dot{
-      width:6px;height:6px;border-radius:50%;
-      background: var(--muted);
-      animation: bounce 1.1s infinite;
-    }
-    .dot:nth-child(2){ animation-delay: .15s; }
-    .dot:nth-child(3){ animation-delay: .30s; }
-    @keyframes bounce{
-      0%, 80%, 100%{ transform: translateY(0); opacity:.7; }
-      40%{ transform: translateY(-4px); opacity:1; }
-    }
-
-    .emailCard{
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 10px 12px;
-      margin-top: 10px;
-      background: rgba(0,0,0,.12);
-    }
-    .emailCard .title{
-      font-weight: 800;
-      color: var(--accent2);
-      margin-bottom: 6px;
-    }
-    .emailCard .row{
-      margin: 2px 0;
-      color: var(--text);
-    }
-    .emailCard .label{
-      color: var(--muted);
-    }
-  </style>
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh}
+.app{width:95%;max-width:980px;height:90vh;background:var(--panel);border-radius:var(--radius);display:flex;flex-direction:column;overflow:hidden}
+.topbar{padding:12px 16px;background:var(--panel2);display:flex;justify-content:space-between;align-items:center}
+.chat{flex:1;overflow:auto;padding:16px}
+.msgRow{display:flex;margin:8px 0}
+.msg{max-width:75%;padding:10px 14px;border-radius:14px;background:var(--assistant);white-space:pre-wrap}
+.msg.user{margin-left:auto;background:#1f6feb33}
+.composer{padding:12px;background:var(--panel2);display:flex;gap:10px;align-items:center}
+.speakBtn{padding:10px 16px;border:none;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));font-weight:bold;cursor:pointer}
+.emailCard{margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:12px}
+.emailCard .title{font-weight:bold;color:var(--accent2)}
+.typing{opacity:.7;font-size:13px}
+</style>
 </head>
 
-<body class="theme-glass">
-  <div class="app">
-    <div class="topbar">
-      <div class="brand">
-        <span class="dot"></span>
-        <div>
-          Voice Email Assistant
-          <small>Voice → Intent → Gmail</small>
-        </div>
-      </div>
-
-      <div class="controls">
-        <select id="themeSel" title="Theme">
-          <option value="theme-glass">Futuristic Glass</option>
-          <option value="theme-chatgpt">ChatGPT</option>
-          <option value="theme-siri">Siri / AI</option>
-          <option value="theme-hacker">Cyber Hacker</option>
-          <option value="theme-saas">SaaS Dashboard</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="chat" id="chat"></div>
-
-    <div class="composer">
-      <button class="speakBtn" id="speakBtn" onclick="startRecording()">🎤 Speak</button>
-      <div class="hint">Try: “Read my inbox”, “Next email”, “Previous email”</div>
-    </div>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div><b>Voice Email Assistant</b></div>
+    <select id="themeSel">
+      <option value="theme-glass">Glass</option>
+      <option value="theme-siri">Siri</option>
+      <option value="theme-hacker">Hacker</option>
+      <option value="theme-saas">SaaS</option>
+    </select>
   </div>
+
+  <div class="chat" id="chat"></div>
+
+  <div class="composer">
+    <button class="speakBtn" id="speakBtn">🎤 Speak</button>
+    <div class="typing">Try: “Read my inbox”</div>
+  </div>
+</div>
 
 <script>
 const chat = document.getElementById("chat");
 const speakBtn = document.getElementById("speakBtn");
 
-let recognition = null;
-let isRecording = false;
-let isProcessing = false;
+let recognition=null;
+let isRecording=false;
+let isProcessing=false;
+let lastFinalText="";
+let lastFinalAt=0;
 
-// Dedupe guard (prevents multiple same calls)
-let lastFinalText = "";
-let lastFinalAt = 0;
-
-function addMsg(role, text, html=false) {
-  const row = document.createElement("div");
-  row.className = "msgRow";
-  const bubble = document.createElement("div");
-  bubble.className = "msg " + (role === "user" ? "user" : "assistant");
-  if (html) bubble.innerHTML = text;
-  else bubble.textContent = text;
+function addMsg(role,text,html=false){
+  const row=document.createElement("div");
+  row.className="msgRow";
+  const bubble=document.createElement("div");
+  bubble.className="msg "+(role==="user"?"user":"assistant");
+  if(html) bubble.innerHTML=text;
+  else bubble.textContent=text;
   row.appendChild(bubble);
   chat.appendChild(row);
-  chat.scrollTop = chat.scrollHeight;
-  return bubble;
+  chat.scrollTop=chat.scrollHeight;
 }
 
-function addTyping() {
-  const bubble = addMsg("assistant", "", true);
-  bubble.innerHTML = `<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>`;
-  return bubble;
-}
-
-addMsg("assistant", `Hi Jeevan 👋
-Say: "Read my inbox"`);
-
-function startRecording() {
-  // hard block spam clicks
-  if (isRecording || isProcessing) return;
-
-  if (!('webkitSpeechRecognition' in window)) {
-    addMsg("assistant", "Speech recognition not supported in this browser.");
-    return;
-  }
-
-  // cleanup old instance
-  if (recognition) {
-    try { recognition.abort(); } catch(e) {}
-    recognition = null;
-  }
-
-  recognition = new webkitSpeechRecognition();
-  recognition.lang = "en-US";
-  recognition.continuous = false;
-
-  // IMPORTANT: allow interim, but only act on FINAL
-  recognition.interimResults = true;
-  recognition.maxAlternatives = 1;
-
-  isRecording = true;
-  speakBtn.classList.add("recording");
-
-  recognition.start();
-
-  recognition.onresult = async (event) => {
-    // Build final transcript only
-    let finalText = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const res = event.results[i];
-      if (res.isFinal) {
-        finalText += res[0].transcript;
-      }
-    }
-
-    finalText = (finalText || "").trim();
-
-    // If not final yet, ignore
-    if (!finalText) return;
-
-    // If already processing, ignore extra final events
-    if (isProcessing) return;
-
-    // Dedupe same final text within 2 seconds
-    const now = Date.now();
-    const norm = finalText.toLowerCase();
-    if (norm === lastFinalText && (now - lastFinalAt) < 2000) return;
-    lastFinalText = norm;
-    lastFinalAt = now;
-
-    // Stop recognition immediately to avoid extra events
-    try { recognition.stop(); } catch(e) {}
-    recognition = null;
-
-    isRecording = false;
-    speakBtn.classList.remove("recording");
-
-    addMsg("user", finalText);
-
-    isProcessing = true;
-    try {
-      await processText(finalText);
-    } finally {
-      isProcessing = false;
-    }
-  };
-
-  recognition.onend = () => {
-    isRecording = false;
-    speakBtn.classList.remove("recording");
-  };
-
-  recognition.onerror = () => {
-    isRecording = false;
-    speakBtn.classList.remove("recording");
-    addMsg("assistant", "❌ Speech recognition error.");
-  };
-}
-
-async function processText(text) {
-  const typing = addTyping();
-
-  try {
-    const intentRes = await fetch("/api/intent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text })
-    });
-    const intent = await intentRes.json();
-
-    const actionRes = await fetch("/api/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(intent)
-    });
-    const result = await actionRes.json();
-
-    typing.remove();
-
-    if (result.emails) {
-      let html = `<div style="font-weight:800">📬 Inbox</div>`;
-      result.emails.forEach((email, i) => {
-        html += `
-          <div class="emailCard">
-            <div class="title">Email ${i+1}</div>
-            <div class="row"><b>From:</b> ${escapeHtml(email.sender || "")}</div>
-            <div class="row"><b>Subject:</b> ${escapeHtml(email.subject || "")}</div>
-            <div class="row"><b>Preview:</b> ${escapeHtml(email.snippet || "")}</div>
-          </div>`;
-      });
-      addMsg("assistant", html, true);
-    } else if (result.email) {
-      const email = result.email;
-      addMsg("assistant",
-`From: ${email.sender}
-Subject: ${email.subject}
-Preview: ${email.snippet}`);
-    } else if (result.error) {
-      addMsg("assistant", "❌ " + result.error);
-    } else {
-      addMsg("assistant", JSON.stringify(result, null, 2));
-    }
-
-  } catch (e) {
-    typing.remove();
-    addMsg("assistant", "❌ Something went wrong.");
-    console.error(e);
-  }
-}
-
-function escapeHtml(str) {
+function escapeHtml(str){
   return String(str)
     .replaceAll("&","&amp;")
     .replaceAll("<","&lt;")
     .replaceAll(">","&gt;")
     .replaceAll('"',"&quot;")
     .replaceAll("'","&#039;");
+}
+
+addMsg("assistant","Hi Jeevan 👋\nSay: Read my inbox");
+
+speakBtn.onclick=()=>startRecording();
+
+function startRecording(){
+  if(isRecording||isProcessing)return;
+  if(!('webkitSpeechRecognition'in window)){
+    addMsg("assistant","Speech recognition not supported.");
+    return;
+  }
+
+  recognition=new webkitSpeechRecognition();
+  recognition.lang="en-US";
+  recognition.interimResults=true;
+  recognition.continuous=false;
+
+  isRecording=true;
+  recognition.start();
+
+  recognition.onresult=async(event)=>{
+    let finalText="";
+    for(let i=event.resultIndex;i<event.results.length;i++){
+      if(event.results[i].isFinal){
+        finalText+=event.results[i][0].transcript;
+      }
+    }
+    finalText=finalText.trim();
+    if(!finalText)return;
+
+    const now=Date.now();
+    if(finalText.toLowerCase()===lastFinalText && now-lastFinalAt<2000)return;
+    lastFinalText=finalText.toLowerCase();
+    lastFinalAt=now;
+
+    recognition.stop();
+    isRecording=false;
+
+    addMsg("user",finalText);
+
+    isProcessing=true;
+    await processText(finalText);
+    isProcessing=false;
+  };
+
+  recognition.onend=()=>{isRecording=false};
+}
+
+async function processText(text){
+  const typingRow=document.createElement("div");
+  typingRow.className="msgRow";
+  typingRow.innerHTML='<div class="msg typing">Processing...</div>';
+  chat.appendChild(typingRow);
+
+  try{
+    const intentRes=await fetch("/api/intent",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text})
+    });
+
+    const intent=await intentRes.json();
+
+    const actionRes=await fetch("/api/action",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(intent)
+    });
+
+    // ✅ HANDLE 401 BEFORE JSON
+    if(actionRes.status===401){
+      const authData=await actionRes.json();
+      typingRow.remove();
+      addMsg("assistant","🔐 Connecting to Gmail...");
+      setTimeout(()=>{
+        window.location.href=authData.auth_url;
+      },1000);
+      return;
+    }
+
+    const result=await actionRes.json();
+    typingRow.remove();
+
+    if(result.emails){
+      let html="<b>📬 Inbox</b>";
+      result.emails.forEach((email,i)=>{
+        html+=`
+        <div class="emailCard">
+          <div class="title">Email ${i+1}</div>
+          <div><b>From:</b> ${escapeHtml(email.sender||"")}</div>
+          <div><b>Subject:</b> ${escapeHtml(email.subject||"")}</div>
+          <div><b>Preview:</b> ${escapeHtml(email.snippet||"")}</div>
+        </div>`;
+      });
+      addMsg("assistant",html,true);
+    }
+    else if(result.email){
+      addMsg("assistant",
+`From: ${result.email.sender}
+Subject: ${result.email.subject}
+Preview: ${result.email.snippet}`);
+    }
+    else if(result.body){
+      addMsg("assistant",result.body);
+    }
+    else if(result.error){
+      addMsg("assistant","❌ "+result.error);
+    }
+    else{
+      addMsg("assistant",JSON.stringify(result,null,2));
+    }
+
+  }catch(e){
+    typingRow.remove();
+    addMsg("assistant","❌ Something went wrong.");
+    console.error(e);
+  }
 }
 </script>
 </body>
