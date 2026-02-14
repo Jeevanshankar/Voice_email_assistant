@@ -26,9 +26,14 @@ def _get_service():
 
     return build("gmail", "v1", credentials=creds)
 
-def fetch_emails(max_results=5):
+def fetch_emails(max_results=10):
     service = _get_service()
-    res = service.users().messages().list(userId="me", maxResults=max_results).execute()
+    res = service.users().messages().list(
+    userId="me",
+    labelIds=["INBOX"],
+    maxResults=max_results
+).execute()
+
     messages = res.get("messages", [])
 
     out = []

@@ -305,152 +305,180 @@
   </div>
 
 <script>
-  // Theme switcher
-  const themeSel = document.getElementById("themeSel");
-  themeSel.addEventListener("change", () => {
-    document.body.className = themeSel.value;
-  });
+const chat = document.getElementById("chat");
+const speakBtn = document.getElementById("speakBtn");
 
-  const chat = document.getElementById("chat");
-  const speakBtn = document.getElementById("speakBtn");
+let recognition = null;
+let isRecording = false;
+let isProcessing = false;
 
-  function addMsg(role, text, html=false) {
-    const row = document.createElement("div");
-    row.className = "msgRow";
-    const bubble = document.createElement("div");
-    bubble.className = "msg " + (role === "user" ? "user" : "assistant");
+// Dedupe guard (prevents multiple same calls)
+let lastFinalText = "";
+let lastFinalAt = 0;
 
-    if (html) bubble.innerHTML = text;
-    else bubble.textContent = text;
+function addMsg(role, text, html=false) {
+  const row = document.createElement("div");
+  row.className = "msgRow";
+  const bubble = document.createElement("div");
+  bubble.className = "msg " + (role === "user" ? "user" : "assistant");
+  if (html) bubble.innerHTML = text;
+  else bubble.textContent = text;
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+  return bubble;
+}
 
-    row.appendChild(bubble);
-    chat.appendChild(row);
-    chat.scrollTop = chat.scrollHeight;
-    return bubble;
+function addTyping() {
+  const bubble = addMsg("assistant", "", true);
+  bubble.innerHTML = `<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>`;
+  return bubble;
+}
+
+addMsg("assistant", `Hi Jeevan 👋
+Say: "Read my inbox"`);
+
+function startRecording() {
+  // hard block spam clicks
+  if (isRecording || isProcessing) return;
+
+  if (!('webkitSpeechRecognition' in window)) {
+    addMsg("assistant", "Speech recognition not supported in this browser.");
+    return;
   }
 
-  function addTyping() {
-    const bubble = addMsg("assistant", "", true);
-    bubble.innerHTML = `<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>`;
-    return bubble;
+  // cleanup old instance
+  if (recognition) {
+    try { recognition.abort(); } catch(e) {}
+    recognition = null;
   }
 
-  // Initial greeting
-  addMsg("assistant",
-`Hi Jeevan 👋
-I can read your inbox using voice.
-Say: "Read my inbox".`);
+  recognition = new webkitSpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.continuous = false;
 
-  // ==============================
-  // 🎤 BROWSER SPEECH RECOGNITION
-  // ==============================
-  function startRecording() {
-    if (!('webkitSpeechRecognition' in window)) {
-      addMsg("assistant", "❌ Your browser does not support voice recognition. Use Chrome.");
-      return;
-    }
+  // IMPORTANT: allow interim, but only act on FINAL
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
 
-    const recognition = new webkitSpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
+  isRecording = true;
+  speakBtn.classList.add("recording");
 
-    speakBtn.classList.add("recording");
+  recognition.start();
 
-    recognition.start();
-
-    recognition.onresult = function(event) {
-      const text = event.results[0][0].transcript;
-      speakBtn.classList.remove("recording");
-
-      addMsg("user", text);
-      pipeline(text);
-    };
-
-    recognition.onerror = function() {
-      speakBtn.classList.remove("recording");
-      addMsg("assistant", "❌ Voice recognition error.");
-    };
-
-    recognition.onend = function() {
-      speakBtn.classList.remove("recording");
-    };
-  }
-
-  // ==============================
-  // PIPELINE (Intent → Action)
-  // ==============================
-  async function pipeline(text) {
-    const typing = addTyping();
-
-    try {
-      // 1) Intent
-      const intentRes = await fetch("/api/intent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
-      });
-      const intent = await intentRes.json();
-
-      // 2) Action
-      const actionRes = await fetch("/api/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(intent || {})
-      });
-      const result = await actionRes.json();
-
-      typing.remove();
-
-      if (result && result.emails) {
-        let html = `<div class="meta">Intent: ${result.intent}</div>`;
-        html += `<div style="margin-top:8px;font-weight:800">📬 Your Inbox</div>`;
-
-        result.emails.forEach((email, i) => {
-          html += `
-            <div class="emailCard">
-              <div class="title">Email ${i+1}</div>
-              <div class="row"><span class="label">From:</span> ${escapeHtml(email.sender || "")}</div>
-              <div class="row"><span class="label">Subject:</span> ${escapeHtml(email.subject || "")}</div>
-              <div class="row"><span class="label">Preview:</span> ${escapeHtml(email.snippet || "")}</div>
-            </div>`;
-        });
-
-        addMsg("assistant", html, true);
-
-      } else if (result && result.email) {
-        const email = result.email;
-        const html = `
-          <div class="meta">Intent: ${escapeHtml(result.intent || "")}</div>
-          <div class="emailCard" style="margin-top:10px">
-            <div class="title">Email</div>
-            <div class="row"><span class="label">From:</span> ${escapeHtml(email.sender || "")}</div>
-            <div class="row"><span class="label">Subject:</span> ${escapeHtml(email.subject || "")}</div>
-            <div class="row"><span class="label">Preview:</span> ${escapeHtml(email.snippet || "")}</div>
-          </div>`;
-        addMsg("assistant", html, true);
-
-      } else if (result && result.error) {
-        addMsg("assistant", `❌ ${result.error}`);
-      } else {
-        addMsg("assistant", JSON.stringify(result, null, 2));
+  recognition.onresult = async (event) => {
+    // Build final transcript only
+    let finalText = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i];
+      if (res.isFinal) {
+        finalText += res[0].transcript;
       }
-
-    } catch (e) {
-      typing.remove();
-      addMsg("assistant", "❌ Something went wrong.");
-      console.error(e);
     }
-  }
 
-  function escapeHtml(str) {
-    return String(str)
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
+    finalText = (finalText || "").trim();
+
+    // If not final yet, ignore
+    if (!finalText) return;
+
+    // If already processing, ignore extra final events
+    if (isProcessing) return;
+
+    // Dedupe same final text within 2 seconds
+    const now = Date.now();
+    const norm = finalText.toLowerCase();
+    if (norm === lastFinalText && (now - lastFinalAt) < 2000) return;
+    lastFinalText = norm;
+    lastFinalAt = now;
+
+    // Stop recognition immediately to avoid extra events
+    try { recognition.stop(); } catch(e) {}
+    recognition = null;
+
+    isRecording = false;
+    speakBtn.classList.remove("recording");
+
+    addMsg("user", finalText);
+
+    isProcessing = true;
+    try {
+      await processText(finalText);
+    } finally {
+      isProcessing = false;
+    }
+  };
+
+  recognition.onend = () => {
+    isRecording = false;
+    speakBtn.classList.remove("recording");
+  };
+
+  recognition.onerror = () => {
+    isRecording = false;
+    speakBtn.classList.remove("recording");
+    addMsg("assistant", "❌ Speech recognition error.");
+  };
+}
+
+async function processText(text) {
+  const typing = addTyping();
+
+  try {
+    const intentRes = await fetch("/api/intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+    const intent = await intentRes.json();
+
+    const actionRes = await fetch("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(intent)
+    });
+    const result = await actionRes.json();
+
+    typing.remove();
+
+    if (result.emails) {
+      let html = `<div style="font-weight:800">📬 Inbox</div>`;
+      result.emails.forEach((email, i) => {
+        html += `
+          <div class="emailCard">
+            <div class="title">Email ${i+1}</div>
+            <div class="row"><b>From:</b> ${escapeHtml(email.sender || "")}</div>
+            <div class="row"><b>Subject:</b> ${escapeHtml(email.subject || "")}</div>
+            <div class="row"><b>Preview:</b> ${escapeHtml(email.snippet || "")}</div>
+          </div>`;
+      });
+      addMsg("assistant", html, true);
+    } else if (result.email) {
+      const email = result.email;
+      addMsg("assistant",
+`From: ${email.sender}
+Subject: ${email.subject}
+Preview: ${email.snippet}`);
+    } else if (result.error) {
+      addMsg("assistant", "❌ " + result.error);
+    } else {
+      addMsg("assistant", JSON.stringify(result, null, 2));
+    }
+
+  } catch (e) {
+    typing.remove();
+    addMsg("assistant", "❌ Something went wrong.");
+    console.error(e);
   }
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
 </script>
 </body>
 </html>

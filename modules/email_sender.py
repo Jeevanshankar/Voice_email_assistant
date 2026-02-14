@@ -1,36 +1,50 @@
 import base64
-from email.message import EmailMessage
-from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-import os
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-]
+from modules.email_reader import _get_service
 
-def _service():
-    if not os.path.exists("token.json"):
-        raise RuntimeError("token.json not found. Say 'read my inbox' once to authorize.")
-    creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    return build("gmail", "v1", credentials=creds)
 
-def send_email(to, subject, body):
-    service = _service()
-    msg = EmailMessage()
-    msg["To"] = to
+def send_email(to_email: str, subject: str, body: str):
+    service = _get_service()
+
+    msg = MIMEMultipart()
+    msg["To"] = to_email
     msg["Subject"] = subject
-    msg.set_content(body)
+    msg.attach(MIMEText(body, "plain", "utf-8"))
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-    return service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    sent = service.users().messages().send(
+        userId="me",
+        body={"raw": raw}
+    ).execute()
 
-def reply_email(to, original_subject, body):
-    service = _service()
-    msg = EmailMessage()
-    msg["To"] = to
-    msg["Subject"] = "Re: " + (original_subject or "")
-    msg.set_content(body)
+    return {"id": sent.get("id"), "threadId": sent.get("threadId")}
+
+
+def reply_email(to_email: str, subject: str, body: str, thread_id: str = None):
+    """
+    Simple reply:
+    - If you pass thread_id, Gmail will group it in that thread.
+    - For perfect threading, you'd also add In-Reply-To/References using Message-ID,
+      but thread_id alone is good enough for most cases.
+    """
+    service = _get_service()
+
+    msg = MIMEMultipart()
+    msg["To"] = to_email
+    msg["Subject"] = f"Re: {subject}" if subject else "Re:"
+    msg.attach(MIMEText(body, "plain", "utf-8"))
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-    return service.users().messages().send(userId="me", body={"raw": raw}).execute()
+
+    payload = {"raw": raw}
+    if thread_id:
+        payload["threadId"] = thread_id
+
+    sent = service.users().messages().send(
+        userId="me",
+        body=payload
+    ).execute()
+
+    return {"id": sent.get("id"), "threadId": sent.get("threadId")}
