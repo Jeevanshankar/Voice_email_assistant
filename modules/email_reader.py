@@ -49,31 +49,19 @@ def save_token(creds_json_string):
 # Gmail Service Builder
 # ==============================
 def _get_service():
-    creds = None
+    if not os.path.exists("token.json"):
+        raise Exception("AUTH_REQUIRED")
 
-    # Load existing token
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    creds = Credentials.from_authorized_user_file("token.json", SCOPES)
 
-    # If no valid creds → refresh or require login
-    if not creds or not creds.valid:
-
-        if creds and creds.expired and creds.refresh_token:
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            save_token(creds.to_json())
-
+            save_token(creds)
         else:
-            flow = _get_flow()
-            auth_url, _ = flow.authorization_url(
-                access_type="offline",
-                prompt="consent"
-            )
-
-            # IMPORTANT: Must match app.py expectation
-            raise Exception(f"AUTH_REQUIRED::{auth_url}")
+            raise Exception("AUTH_REQUIRED")
 
     return build("gmail", "v1", credentials=creds)
-
 
 # ==============================
 # Fetch Email List

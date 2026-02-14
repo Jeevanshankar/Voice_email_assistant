@@ -191,7 +191,14 @@ def email_action():
         return jsonify({"error": "Unknown intent"}), 400
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        err = str(e)
+
+        if "AUTH_REQUIRED" in err:
+            return _auth_required_response()
+
+        print("Exception in /api/action:", err)
+        return jsonify({"error": f"Server error: {err}"}), 500
+
 
 
 if __name__ == "__main__":
