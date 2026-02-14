@@ -1,95 +1,86 @@
 import os
 import json
 import base64
-import tempfile
-
 from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import Flow
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
 ]
 
-# In-memory token for Render (non-persistent)
-_MEMORY_CREDS = None
+# Default redirect (Render production)
+REDIRECT_URI = os.environ.get(
+    "OAUTH_REDIRECT_URI",
+    "https://voxmail.onrender.com/oauth2callback"
+)
 
 
-def _load_client_secret_file():
-    """
-    Returns a path to a client_secret.json file.
-    - If GOOGLE_CREDENTIALS_JSON env var exists, writes it to a temp file and returns that path.
-    - Else falls back to local credentials.json (for development).
-    """
-    env_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+# ==============================
+# OAuth Flow Builder
+# ==============================
+def _get_flow():
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if not creds_json:
+        raise Exception("Missing GOOGLE_CREDENTIALS_JSON environment variable")
 
-    if env_json:
-        data = json.loads(env_json)
-        tmp = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json")
-        json.dump(data, tmp)
-        tmp.flush()
-        tmp.close()
-        return tmp.name
+    client_config = json.loads(creds_json)
 
-    # Local dev fallback
-    if os.path.exists("credentials.json"):
-        return "credentials.json"
-
-    raise RuntimeError(
-        "Missing OAuth client secrets. "
-        "Set GOOGLE_CREDENTIALS_JSON on Render or provide credentials.json locally."
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=REDIRECT_URI
     )
 
+    return flow
 
+
+# ==============================
+# Save token.json
+# ==============================
+def save_token(creds_json_string):
+    with open("token.json", "w") as token:
+        token.write(creds_json_string)
+
+
+# ==============================
+# Gmail Service Builder
+# ==============================
 def _get_service():
-    """
-    Builds and returns Gmail API service.
-    Token handling:
-    - Local: uses token.json for persistence
-    - Render: uses in-memory creds (token resets on restart)
-    """
-    global _MEMORY_CREDS
     creds = None
 
-    running_on_render = bool(os.environ.get("RENDER")) or bool(os.environ.get("RENDER_SERVICE_ID"))
+    # Load existing token
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
 
-    # ---------- Load existing token ----------
-    if running_on_render:
-        # Render: in-memory token only
-        creds = _MEMORY_CREDS
-    else:
-        # Local: use token.json
-        if os.path.exists("token.json"):
-            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-
-    # ---------- Refresh / Login ----------
+    # If no valid creds → refresh or require login
     if not creds or not creds.valid:
+
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-        else:
-            client_secret_path = _load_client_secret_file()
-            flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
+            save_token(creds.to_json())
 
-            # IMPORTANT:
-            # For Render, run_local_server opens a local port on the server (not accessible to you).
-            # This will NOT work unless you change to a web-based OAuth flow.
-            # For now, keep this working locally, and we'll convert to web OAuth for Render next.
-            creds = flow.run_local_server(port=0)
-
-        # ---------- Save token ----------
-        if running_on_render:
-            _MEMORY_CREDS = creds
         else:
-            with open("token.json", "w") as token:
-                token.write(creds.to_json())
+            flow = _get_flow()
+            auth_url, _ = flow.authorization_url(
+                access_type="offline",
+                prompt="consent"
+            )
+
+            # IMPORTANT: Must match app.py expectation
+            raise Exception(f"AUTH_REQUIRED::{auth_url}")
 
     return build("gmail", "v1", credentials=creds)
 
 
+# ==============================
+# Fetch Email List
+# ==============================
 def fetch_emails(max_results=10):
     service = _get_service()
+
     res = service.users().messages().list(
         userId="me",
         labelIds=["INBOX"],
@@ -97,10 +88,11 @@ def fetch_emails(max_results=10):
     ).execute()
 
     messages = res.get("messages", [])
-    out = []
 
+    out = []
     for m in messages:
         msg_id = m["id"]
+
         msg = service.users().messages().get(
             userId="me",
             id=msg_id,
@@ -111,8 +103,15 @@ def fetch_emails(max_results=10):
         headers = msg.get("payload", {}).get("headers", [])
         snippet = msg.get("snippet", "")
 
-        sender = next((h["value"] for h in headers if h["name"].lower() == "from"), "Unknown")
-        subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "No subject")
+        sender = next(
+            (h["value"] for h in headers if h["name"].lower() == "from"),
+            "Unknown"
+        )
+
+        subject = next(
+            (h["value"] for h in headers if h["name"].lower() == "subject"),
+            "No subject"
+        )
 
         out.append({
             "id": msg_id,
@@ -125,8 +124,12 @@ def fetch_emails(max_results=10):
     return out
 
 
+# ==============================
+# Fetch Full Email Body
+# ==============================
 def fetch_email_body(message_id):
     service = _get_service()
+
     msg = service.users().messages().get(
         userId="me",
         id=message_id,
@@ -137,11 +140,14 @@ def fetch_email_body(message_id):
         for p in parts or []:
             mime = p.get("mimeType", "")
             body = p.get("body", {}).get("data")
+
             if mime == "text/plain" and body:
                 return body
+
             nested = _walk(p.get("parts"))
             if nested:
                 return nested
+
         return None
 
     payload = msg.get("payload", {})
@@ -150,5 +156,8 @@ def fetch_email_body(message_id):
     if not data:
         return msg.get("snippet", "")
 
-    decoded = base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="ignore")
+    decoded = base64.urlsafe_b64decode(
+        data.encode("utf-8")
+    ).decode("utf-8", errors="ignore")
+
     return decoded
