@@ -40,9 +40,22 @@ def _get_flow():
 # ==============================
 # Save token.json
 # ==============================
-def save_token(creds_json_string):
+def save_token(creds):
+    """
+    Accepts either:
+    - Credentials object
+    - JSON string
+    """
+    if hasattr(creds, "to_json"):
+        data = creds.to_json()
+    elif isinstance(creds, str):
+        data = creds
+    else:
+        raise Exception("Invalid credentials format")
+
     with open("token.json", "w") as token:
-        token.write(creds_json_string)
+        token.write(data)
+
 
 
 # ==============================
