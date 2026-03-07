@@ -14,6 +14,8 @@ from modules.email_sender import reply_email as gmail_reply_email
 app = Flask(__name__)
 
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change_this_secret")
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = "None"
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 EMAIL_CACHE = []
@@ -55,7 +57,10 @@ def _build_auth_url():
         prompt="consent",
     )
 
+    # Save OAuth state + PKCE verifier in session
     session["oauth_state"] = state
+    session["code_verifier"] = flow.code_verifier
+
     return auth_url
 
 
@@ -91,11 +96,17 @@ def oauth2callback():
             state=state
         )
 
+        # Restore PKCE verifier saved before redirect
+        flow.code_verifier = session.get("code_verifier")
+
         flow.fetch_token(code=code)
         creds = flow.credentials
 
-        # ✅ SAVE CREDENTIAL OBJECT (not string)
         save_token(creds)
+
+        # cleanup session
+        session.pop("oauth_state", None)
+        session.pop("code_verifier", None)
 
         return redirect("/")
 
@@ -105,11 +116,16 @@ def oauth2callback():
 
 @app.route("/api/intent", methods=["POST"])
 def get_intent():
-    data = request.get_json(force=True) or {}
-    text = data.get("text", "")
-    intent_data = detect_intent(text)
-
-    return jsonify(intent_data)
+    try:
+        data = request.get_json(force=True) or {}
+        text = data.get("text", "")
+        intent_data = detect_intent(text)
+        return jsonify(intent_data)
+    except Exception as e:
+        return jsonify({
+            "error": "INTENT_ERROR",
+            "message": str(e)
+        }), 500
 
 
 @app.route("/api/action", methods=["POST"])
@@ -142,28 +158,49 @@ def email_action():
             return jsonify({"emails": EMAIL_CACHE})
 
         if intent == "next_email":
+            if not EMAIL_CACHE:
+                return jsonify({"error": "Inbox is empty. Say 'read my inbox' first."}), 400
+
             CURRENT_INDEX = min(CURRENT_INDEX + 1, len(EMAIL_CACHE) - 1)
             return jsonify({"email": EMAIL_CACHE[CURRENT_INDEX]})
 
         if intent == "previous_email":
+            if not EMAIL_CACHE:
+                return jsonify({"error": "Inbox is empty. Say 'read my inbox' first."}), 400
+
             CURRENT_INDEX = max(CURRENT_INDEX - 1, 0)
             return jsonify({"email": EMAIL_CACHE[CURRENT_INDEX]})
 
         if intent == "read_email_number":
+            if not EMAIL_CACHE:
+                return jsonify({"error": "Inbox is empty. Say 'read my inbox' first."}), 400
+
             if not isinstance(number, int):
                 return jsonify({"error": "Say: email 2"}), 400
+
+            if number < 1 or number > len(EMAIL_CACHE):
+                return jsonify({"error": f"Email number must be between 1 and {len(EMAIL_CACHE)}"}), 400
 
             CURRENT_INDEX = number - 1
             return jsonify({"email": EMAIL_CACHE[CURRENT_INDEX]})
 
         if intent == "open_email":
+            if not EMAIL_CACHE:
+                return jsonify({"error": "Inbox is empty. Say 'read my inbox' first."}), 400
+
             msg_id = EMAIL_CACHE[CURRENT_INDEX].get("id")
+            if not msg_id:
+                return jsonify({"error": "No message id found for current email"}), 500
+
             body = fetch_email_body(msg_id)
             return jsonify({"body": body})
 
         if intent == "send_email":
             if not recipient or "@" not in recipient:
                 return jsonify({"error": "Invalid email address"}), 400
+
+            if not message:
+                return jsonify({"error": "Missing email body"}), 400
 
             result = gmail_send_email(
                 recipient,
@@ -173,6 +210,12 @@ def email_action():
             return jsonify({"status": "sent", "details": result})
 
         if intent == "reply_email":
+            if not EMAIL_CACHE:
+                return jsonify({"error": "Inbox is empty. Say 'read my inbox' first."}), 400
+
+            if not message:
+                return jsonify({"error": "Missing reply message"}), 400
+
             current = EMAIL_CACHE[CURRENT_INDEX]
             sender_field = current.get("sender", "")
 
@@ -192,19 +235,19 @@ def email_action():
 
     except Exception as e:
         err = str(e)
-
         print("Exception in /api/action:", err)
 
         if "AUTH_REQUIRED" in err:
             return jsonify({
-            "error": "AUTH_REQUIRED",
-            "auth_url": _build_auth_url()
-        }), 401
+                "error": "AUTH_REQUIRED",
+                "auth_url": _build_auth_url()
+            }), 401
 
-    return jsonify({
-        "error": "SERVER_ERROR",
-        "message": err
-    }), 500
+        return jsonify({
+            "error": "SERVER_ERROR",
+            "message": err
+        }), 500
+
 
 if __name__ == "__main__":
     app.run()
